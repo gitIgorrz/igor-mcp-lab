@@ -206,6 +206,7 @@ jobs:
         run: |
           RESPONSE=$(curl -s -X POST "${{ needs.deploy.outputs.mcp_url }}" \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
           echo "$RESPONSE"
           echo "$RESPONSE" | grep -q '"echo"' || { echo "FAIL: echo tool missing"; exit 1; }
@@ -216,6 +217,7 @@ jobs:
         run: |
           RESPONSE=$(curl -s -X POST "${{ needs.deploy.outputs.mcp_url }}" \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"text":"ping"}}}')
           echo "$RESPONSE"
           echo "$RESPONSE" | grep -q '"ping"' || { echo "FAIL: unexpected echo response"; exit 1; }
