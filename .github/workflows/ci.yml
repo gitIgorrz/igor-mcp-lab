@@ -8,19 +8,16 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  pull-requests: write
 
 env:
-  TF_CLOUD_ORGANIZATION: gitIgorrz
-  TF_WORKSPACE: igor-mcp-lab
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -29,73 +26,5 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm run test:built
-
-  terraform-plan:
-    name: "Terraform: Validate & Plan"
-    runs-on: ubuntu-latest
-    needs: test
-    env:
-      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-          terraform_version: "~1.9"
-          terraform_wrapper: true
-
-      - name: Login to Azure (OIDC — read-only plan preview)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Export ARM credentials
-        run: |
-          echo "ARM_ACCESS_TOKEN=$(az account get-access-token --query accessToken -o tsv)" >> "$GITHUB_ENV"
-          echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> "$GITHUB_ENV"
-          echo "ARM_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}" >> "$GITHUB_ENV"
-          echo "TF_VAR_subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> "$GITHUB_ENV"
-
-      - name: Terraform Init
-        working-directory: infra
-        run: terraform init
-
-      - name: Terraform Validate
-        working-directory: infra
-        run: terraform validate
-
-      - name: Generate plan variables
-        working-directory: infra
-        run: |
-          cat > run.auto.tfvars <<'EOF'
-          create_aci = true
-          image_tag  = "plan-preview"
-          EOF
-
-      - name: Terraform Plan
-        id: plan
-        working-directory: infra
-        run: terraform plan -no-color -input=false 2>&1 | tee plan.txt
-        continue-on-error: true
-
-      - name: Post plan to PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const raw = fs.readFileSync('infra/plan.txt', 'utf8');
-            const body = raw.length > 58000 ? raw.slice(-58000) + '\n...(truncated)' : raw;
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Terraform Plan\n<details><summary>Show</summary>\n\n\`\`\`\n${body}\n\`\`\`\n</details>`
-            });
-
-      - name: Fail if plan errored
-        if: steps.plan.outcome == 'failure'
-        run: exit 1
+# HCP Terraform handles speculative plans for PRs automatically via the
+# VCS connection — no GitHub Actions steps needed for Terraform.

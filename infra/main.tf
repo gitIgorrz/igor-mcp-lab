@@ -1,8 +1,10 @@
 provider "azurerm" {
   features {}
+  use_oidc        = true
   subscription_id = var.subscription_id
-  # Credentials come from ARM_ACCESS_TOKEN exported by GitHub Actions after
-  # azure/login (OIDC — GitHub → Azure federated credential). No client secrets.
+  # HCP Terraform DPC injects ARM_OIDC_TOKEN, ARM_CLIENT_ID, ARM_TENANT_ID,
+  # ARM_SUBSCRIPTION_ID at run time via TFC_AZURE_* workspace env vars.
+  # No client secrets stored anywhere.
 }
 
 resource "random_string" "suffix" {
@@ -88,6 +90,7 @@ resource "azurerm_container_group" "mcp" {
       PORT        = tostring(var.mcp_server_port)
       ENVIRONMENT = "azure"
       IMAGE_TAG   = var.image_tag
+      DEPLOYED_AT = var.deployed_at
     }
 
     liveness_probe {
