@@ -1,10 +1,13 @@
 provider "azurerm" {
   features {}
   use_oidc        = true
+  oidc_token      = var.tfc_workload_identity_token
   subscription_id = var.subscription_id
-  # ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID, ARM_USE_OIDC, ARM_OIDC_TOKEN
-  # are injected by HCP Terraform Dynamic Provider Credentials (remote execution).
-  # Never hardcoded — set TFC_AZURE_* as Environment Variables in the workspace.
+  # HCP Terraform automatically populates tfc_workload_identity_token with a
+  # short-lived OIDC JWT (audience: api://AzureADTokenExchange) when
+  # TFC_WORKLOAD_IDENTITY_AUDIENCE is set in the workspace. ARM_CLIENT_ID,
+  # ARM_TENANT_ID, ARM_SUBSCRIPTION_ID must be set as workspace env vars.
+  # No client secrets stored anywhere.
 }
 
 resource "random_string" "suffix" {

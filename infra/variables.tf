@@ -49,3 +49,10 @@ variable "deployed_at" {
   type        = string
   default     = "unknown"
 }
+
+variable "tfc_workload_identity_token" {
+  description = "OIDC JWT auto-populated by HCP Terraform when TFC_WORKLOAD_IDENTITY_AUDIENCE is set. Never set this manually."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
