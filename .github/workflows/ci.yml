@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  TF_CLOUD_ORGANIZATION: gitIgorrz
+  TF_WORKSPACE: igor-mcp-lab
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test:built
+
+  terraform-plan:
+    name: "HCP Terraform: Speculative Plan"
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload Terraform configuration
+        id: upload
+        uses: hashicorp/tfc-workflows-github/actions/upload-configuration@v1.3.2
+        with:
+          workspace: ${{ env.TF_WORKSPACE }}
+          directory: infra
+          speculative: true
+
+      - name: Create speculative plan
+        id: plan-run
+        uses: hashicorp/tfc-workflows-github/actions/create-run@v1.3.2
+        with:
+          workspace: ${{ env.TF_WORKSPACE }}
+          configuration_version: ${{ steps.upload.outputs.configuration_version_id }}
+          plan_only: true
+          message: "Speculative plan for PR #${{ github.event.pull_request.number }}"
+
+      - name: Get plan output
+        id: plan-output
+        uses: hashicorp/tfc-workflows-github/actions/plan-output@v1.3.2
+        with:
+          plan: ${{ fromJSON(steps.plan-run.outputs.payload).data.relationships.plan.data.id }}
+
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const add    = "${{ steps.plan-output.outputs.add }}";
+            const change = "${{ steps.plan-output.outputs.change }}";
+            const destroy = "${{ steps.plan-output.outputs.destroy }}";
+            const runUrl  = "https://app.terraform.io/app/${{ env.TF_CLOUD_ORGANIZATION }}/workspaces/${{ env.TF_WORKSPACE }}/runs/${{ steps.plan-run.outputs.run_id }}";
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: [
+                "## Terraform Plan",
+                `**+${add} to add · ~${change} to change · -${destroy} to destroy**`,
+                "",
+                `[View full plan in HCP Terraform](${runUrl})`
+              ].join("\n")
+            });

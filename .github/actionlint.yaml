@@ -1,0 +1,10 @@
+self-hosted-runner:
+  labels: []
+
+# Declare secrets known to this repo so actionlint doesn't warn about them.
+# These names must match what is configured in GitHub → Settings → Secrets.
+secrets:
+  - TF_API_TOKEN
+  - AZURE_CLIENT_ID
+  - AZURE_TENANT_ID
+  - AZURE_SUBSCRIPTION_ID
