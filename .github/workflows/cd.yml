@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write   # OIDC to Azure (for ACR push) and to HCP Terraform
+  id-token: write   # OIDC to Azure (ACR push) and to HCP Terraform
 
 env:
   TF_CLOUD_ORGANIZATION: gitIgorrz
@@ -20,12 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-
       - run: npm ci
       - run: npm run lint
       - run: npm run build
@@ -40,9 +38,16 @@ jobs:
       TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
     outputs:
       run_id: ${{ steps.create-run.outputs.run_id }}
-      configuration_version_id: ${{ steps.upload.outputs.configuration_version_id }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generate Terraform variables for bootstrap
+        working-directory: infra
+        run: |
+          cat > run.auto.tfvars <<'EOF'
+          create_aci = false
+          image_tag  = "bootstrap"
+          EOF
 
       - name: Upload Terraform configuration
         id: upload
@@ -58,11 +63,6 @@ jobs:
           workspace: ${{ env.TF_WORKSPACE }}
           configuration_version: ${{ steps.upload.outputs.configuration_version_id }}
           message: "Bootstrap: create ACR — ${{ github.sha }}"
-          variables: |
-            [
-              {"key": "create_aci", "value": "false", "category": "terraform", "sensitive": false},
-              {"key": "image_tag",  "value": "bootstrap", "category": "terraform", "sensitive": false}
-            ]
 
       - name: Apply bootstrap run
         uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.3.2
@@ -70,7 +70,7 @@ jobs:
           run: ${{ steps.create-run.outputs.run_id }}
           comment: "Auto-approved: bootstrap phase (no ACI) — ${{ github.sha }}"
 
-  # ── Read ACR outputs from HCP TF state ─────────────────────────────────────
+  # ── Read ACR name from HCP TF state ───────────────────────────────────────
   read-outputs:
     name: Read Terraform outputs
     runs-on: ubuntu-latest
@@ -87,7 +87,7 @@ jobs:
           terraform_version: "~1.9"
           terraform_wrapper: false
 
-      - name: Terraform Init (to access remote state)
+      - name: Terraform Init
         working-directory: infra
         run: terraform init
 
@@ -98,7 +98,7 @@ jobs:
           echo "acr_name=$(terraform output -raw acr_name)" >> "$GITHUB_OUTPUT"
           echo "acr_login_server=$(terraform output -raw acr_login_server)" >> "$GITHUB_OUTPUT"
 
-  # ── Build & push Docker image to ACR (Azure OIDC from GitHub Actions) ──────
+  # ── Build & push Docker image to ACR (GitHub → Azure OIDC) ───────────────
   build-push:
     name: Build & Push Image
     runs-on: ubuntu-latest
@@ -106,7 +106,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Login to Azure (OIDC — GitHub → Azure federated credential)
+      - name: Login to Azure (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -135,10 +135,24 @@ jobs:
     runs-on: ubuntu-latest
     needs: [read-outputs, build-push]
     environment: production
+    env:
+      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
     outputs:
       run_id: ${{ steps.create-run.outputs.run_id }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Generate Terraform variables for deploy
+        working-directory: infra
+        run: |
+          cat > run.auto.tfvars <<EOF
+          create_aci = true
+          image_tag  = "${{ github.sha }}"
+          EOF
 
       - name: Upload Terraform configuration
         id: upload
@@ -146,9 +160,6 @@ jobs:
         with:
           workspace: ${{ env.TF_WORKSPACE }}
           directory: infra
-        env:
-          TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-          TF_CLOUD_ORGANIZATION: ${{ env.TF_CLOUD_ORGANIZATION }}
 
       - name: Create HCP TF plan (deploy ACI with new image)
         id: create-run
@@ -156,44 +167,30 @@ jobs:
         with:
           workspace: ${{ env.TF_WORKSPACE }}
           configuration_version: ${{ steps.upload.outputs.configuration_version_id }}
-          message: "Deploy: ${{ github.sha }}"
-          variables: |
-            [
-              {"key": "create_aci", "value": "true",                    "category": "terraform", "sensitive": false},
-              {"key": "image_tag",  "value": "${{ github.sha }}",       "category": "terraform", "sensitive": false}
-            ]
-        env:
-          TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-          TF_CLOUD_ORGANIZATION: ${{ env.TF_CLOUD_ORGANIZATION }}
+          message: "Deploy ACI: ${{ github.sha }}"
 
       - name: Show plan output
         uses: hashicorp/tfc-workflows-github/actions/plan-output@v1.3.2
         with:
           plan: ${{ fromJSON(steps.create-run.outputs.payload).data.relationships.plan.data.id }}
-        env:
-          TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-          TF_CLOUD_ORGANIZATION: ${{ env.TF_CLOUD_ORGANIZATION }}
 
       # ── Gate 2: tests must pass before apply is triggered ─────────────────
       - name: Re-run tests (gate before apply)
         run: |
           npm ci
-          npm run test:built
+          npm test
 
       - name: Apply deploy run
         uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.3.2
         with:
           run: ${{ steps.create-run.outputs.run_id }}
           comment: "Tests passed — applying deploy for ${{ github.sha }}"
-        env:
-          TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-          TF_CLOUD_ORGANIZATION: ${{ env.TF_CLOUD_ORGANIZATION }}
 
   # ── Health check + smoke tests ─────────────────────────────────────────────
   smoke-test:
     name: Smoke Test
     runs-on: ubuntu-latest
-    needs: [read-outputs, deploy]
+    needs: deploy
     steps:
       - uses: actions/checkout@v4
 
@@ -207,7 +204,7 @@ jobs:
         working-directory: infra
         run: terraform init
 
-      - name: Read health and MCP endpoint URLs
+      - name: Read endpoints from HCP TF state
         id: endpoints
         working-directory: infra
         run: |
@@ -232,18 +229,18 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
           echo "Response: $RESPONSE"
-          echo "$RESPONSE" | grep -q '"echo"'   || { echo "FAIL: echo tool missing";   exit 1; }
-          echo "$RESPONSE" | grep -q '"add"'    || { echo "FAIL: add tool missing";    exit 1; }
-          echo "Smoke test passed — all expected tools registered."
+          echo "$RESPONSE" | grep -q '"echo"' || { echo "FAIL: echo tool missing"; exit 1; }
+          echo "$RESPONSE" | grep -q '"add"'  || { echo "FAIL: add tool missing";  exit 1; }
+          echo "Smoke test passed."
 
-      - name: Smoke test — echo tool invocation
+      - name: Smoke test — echo invocation
         run: |
           RESPONSE=$(curl -s -X POST "${{ steps.endpoints.outputs.mcp_url }}" \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"text":"ping"}}}')
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"ping"' || { echo "FAIL: echo returned unexpected response"; exit 1; }
-          echo "Echo tool smoke test passed."
+          echo "Echo smoke test passed."
 
       - name: Deployment summary
         run: |

@@ -39,6 +39,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate Terraform variables for plan
+        working-directory: infra
+        run: |
+          cat > run.auto.tfvars <<'EOF'
+          create_aci = true
+          image_tag  = "plan-only"
+          EOF
+
       - name: Upload Terraform configuration
         id: upload
         uses: hashicorp/tfc-workflows-github/actions/upload-configuration@v1.3.2
