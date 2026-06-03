@@ -1,10 +1,8 @@
 provider "azurerm" {
   features {}
-  use_oidc        = true
   subscription_id = var.subscription_id
-  # HCP Terraform injects ARM_CLIENT_ID, ARM_TENANT_ID, ARM_USE_OIDC, ARM_OIDC_TOKEN
-  # via Dynamic Provider Credentials when TFC_AZURE_PROVIDER_AUTH=true is set
-  # as an Environment Variable in the workspace. Never hardcode these values.
+  # Credentials come from ARM_ACCESS_TOKEN exported by GitHub Actions after
+  # azure/login (OIDC — GitHub → Azure federated credential). No client secrets.
 }
 
 resource "random_string" "suffix" {

@@ -31,7 +31,7 @@ jobs:
       - run: npm run test:built
 
   terraform-plan:
-    name: "HCP Terraform: Speculative Plan"
+    name: "Terraform: Validate & Plan"
     runs-on: ubuntu-latest
     needs: test
     env:
@@ -39,54 +39,62 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate Terraform variables for plan
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          terraform_version: "~1.9"
+          terraform_wrapper: true
+
+      - name: Login to Azure (OIDC — read-only plan preview)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export ARM credentials
+        run: |
+          echo "ARM_ACCESS_TOKEN=$(az account get-access-token --query accessToken -o tsv)" >> "$GITHUB_ENV"
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> "$GITHUB_ENV"
+          echo "ARM_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}" >> "$GITHUB_ENV"
+
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: infra
+        run: terraform validate
+
+      - name: Generate plan variables
         working-directory: infra
         run: |
           cat > run.auto.tfvars <<'EOF'
           create_aci = true
-          image_tag  = "plan-only"
+          image_tag  = "plan-preview"
           EOF
 
-      - name: Upload Terraform configuration
-        id: upload
-        uses: hashicorp/tfc-workflows-github/actions/upload-configuration@v1.3.2
-        with:
-          workspace: ${{ env.TF_WORKSPACE }}
-          directory: infra
-          speculative: true
-
-      - name: Create speculative plan
-        id: plan-run
-        uses: hashicorp/tfc-workflows-github/actions/create-run@v1.3.2
-        with:
-          workspace: ${{ env.TF_WORKSPACE }}
-          configuration_version: ${{ steps.upload.outputs.configuration_version_id }}
-          plan_only: true
-          message: "Speculative plan for PR #${{ github.event.pull_request.number }}"
-
-      - name: Get plan output
-        id: plan-output
-        uses: hashicorp/tfc-workflows-github/actions/plan-output@v1.3.2
-        with:
-          plan: ${{ fromJSON(steps.plan-run.outputs.payload).data.relationships.plan.data.id }}
+      - name: Terraform Plan
+        id: plan
+        working-directory: infra
+        run: terraform plan -no-color -input=false 2>&1 | tee plan.txt
+        continue-on-error: true
 
       - name: Post plan to PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const add    = "${{ steps.plan-output.outputs.add }}";
-            const change = "${{ steps.plan-output.outputs.change }}";
-            const destroy = "${{ steps.plan-output.outputs.destroy }}";
-            const runUrl  = "https://app.terraform.io/app/${{ env.TF_CLOUD_ORGANIZATION }}/workspaces/${{ env.TF_WORKSPACE }}/runs/${{ steps.plan-run.outputs.run_id }}";
+            const fs = require('fs');
+            const raw = fs.readFileSync('infra/plan.txt', 'utf8');
+            const body = raw.length > 58000 ? raw.slice(-58000) + '\n...(truncated)' : raw;
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: [
-                "## Terraform Plan",
-                `**+${add} to add · ~${change} to change · -${destroy} to destroy**`,
-                "",
-                `[View full plan in HCP Terraform](${runUrl})`
-              ].join("\n")
+              body: `## Terraform Plan\n<details><summary>Show</summary>\n\n\`\`\`\n${body}\n\`\`\`\n</details>`
             });
+
+      - name: Fail if plan errored
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
