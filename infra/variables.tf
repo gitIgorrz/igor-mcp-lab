@@ -50,8 +50,3 @@ variable "deployed_at" {
   default     = "unknown"
 }
 
-variable "tfc_workload_identity_token_azurerm" {
-  description = "OIDC JWT auto-populated by HCP Terraform when TFC_WORKLOAD_IDENTITY_AUDIENCE_AZURERM is set. Never set this manually."
-  type        = string
-  sensitive   = true
-}
