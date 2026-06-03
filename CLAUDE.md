@@ -26,3 +26,13 @@ After each phase below, STOP and confirm success before continuing:
 ## When Compacting
 
 Always preserve: modified files list, last test command run, current checkpoint status
+
+## Context & Compaction Rules
+
+- When compacting, always preserve: current deployment phase, last checkpoint
+  status, all resources created (names/types/locations), last test command
+  and result, any errors encountered, list of all modified files
+- If context is lost mid-deployment, read ~/.claude/projects/ to recover state
+  before attempting to continue or retry any phase
+- Before any terraform apply or az command, log the current state to a
+  deployment-log.txt file in the repo root so progress survives compaction
