@@ -43,3 +43,9 @@ variable "aci_memory_gb" {
   type    = number
   default = 0.5
 }
+
+variable "deployed_at" {
+  description = "ISO-8601 timestamp of this deployment — shown by the server-info tool"
+  type        = string
+  default     = "unknown"
+}
