@@ -94,7 +94,7 @@ resource "azurerm_container_group" "mcp" {
       http_get {
         path   = "/health"
         port   = var.mcp_server_port
-        scheme = "HTTP"
+        scheme = "http"
       }
       initial_delay_seconds = 15
       period_seconds        = 20
@@ -105,7 +105,7 @@ resource "azurerm_container_group" "mcp" {
       http_get {
         path   = "/health"
         port   = var.mcp_server_port
-        scheme = "HTTP"
+        scheme = "http"
       }
       initial_delay_seconds = 5
       period_seconds        = 10
