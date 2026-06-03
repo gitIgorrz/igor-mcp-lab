@@ -23,9 +23,9 @@ variable "image_tag" {
 }
 
 variable "create_aci" {
-  description = "Set false on bootstrap run (before image exists in ACR), true for all subsequent runs"
+  description = "Controls whether ACI is created. Defaults true for VCS-driven runs."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "mcp_server_port" {

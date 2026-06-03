@@ -10,12 +10,10 @@ permissions:
   id-token: write   # GitHub → Azure OIDC (for ACR push)
 
 env:
-  TF_CLOUD_ORGANIZATION: gitIgorrz
-  TF_WORKSPACE: igor-mcp-lab
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Gate 1: tests must pass before any infra changes ──────────────────────
+  # ── Gate 1: tests must pass before image is pushed ─────────────────────────
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -30,93 +28,30 @@ jobs:
       - run: npm run build
       - run: npm run test:built
 
-  # ── Bootstrap: provision ACR (no ACI) via HCP Terraform remote execution ──
-  bootstrap:
-    name: "HCP Terraform: Bootstrap infra"
-    runs-on: ubuntu-latest
-    needs: test
-    env:
-      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-    outputs:
-      run_id: ${{ steps.create-run.outputs.run_id }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Generate Terraform variables (bootstrap)
-        working-directory: infra
-        run: |
-          cat > run.auto.tfvars <<'EOF'
-          create_aci  = false
-          image_tag   = "bootstrap"
-          deployed_at = "unknown"
-          EOF
-
-      - name: Upload Terraform configuration
-        id: upload
-        uses: hashicorp/tfc-workflows-github/actions/upload-configuration@v1.3.2
-        with:
-          workspace: ${{ env.TF_WORKSPACE }}
-          directory: infra
-
-      - name: Create HCP TF run (ACR only)
-        id: create-run
-        uses: hashicorp/tfc-workflows-github/actions/create-run@v1.3.2
-        with:
-          workspace: ${{ env.TF_WORKSPACE }}
-          configuration_version: ${{ steps.upload.outputs.configuration_version_id }}
-          message: "Bootstrap: create ACR — ${{ github.sha }}"
-
-      - name: Apply bootstrap run
-        uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.3.2
-        with:
-          run: ${{ steps.create-run.outputs.run_id }}
-          comment: "Auto-approved: bootstrap (ACR only, no ACI) — ${{ github.sha }}"
-
-  # ── Read ACR name from HCP TF state ───────────────────────────────────────
-  read-outputs:
-    name: Read Terraform outputs
-    runs-on: ubuntu-latest
-    needs: bootstrap
-    outputs:
-      acr_name: ${{ steps.tf-out.outputs.acr_name }}
-      acr_login_server: ${{ steps.tf-out.outputs.acr_login_server }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-          terraform_version: "~1.9"
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: infra
-        run: terraform init
-
-      - name: Read ACR outputs from HCP TF state
-        id: tf-out
-        working-directory: infra
-        run: |
-          echo "acr_name=$(terraform output -raw acr_name)" >> "$GITHUB_OUTPUT"
-          echo "acr_login_server=$(terraform output -raw acr_login_server)" >> "$GITHUB_OUTPUT"
-
-  # ── Build & push Docker image to ACR (GitHub → Azure OIDC) ───────────────
+  # ── Build & push Docker image to ACR ──────────────────────────────────────
   build-push:
     name: Build & Push Image
     runs-on: ubuntu-latest
-    needs: read-outputs
+    needs: test
+    outputs:
+      acr_login_server: ${{ steps.acr.outputs.login_server }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Login to Azure (OIDC)
+      - name: Login to Azure (GitHub → Azure OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Get ACR login server
+        id: acr
+        run: |
+          echo "login_server=$(az acr list --resource-group rg-igormcplab --query '[0].loginServer' -o tsv)" >> "$GITHUB_OUTPUT"
+
       - name: Login to ACR
-        run: az acr login --name "${{ needs.read-outputs.outputs.acr_name }}"
+        run: az acr login --name "$(az acr list --resource-group rg-igormcplab --query '[0].name' -o tsv)"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -126,106 +61,35 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ needs.read-outputs.outputs.acr_login_server }}/igormcplab:${{ github.sha }}
-            ${{ needs.read-outputs.outputs.acr_login_server }}/igormcplab:latest
-          cache-from: type=registry,ref=${{ needs.read-outputs.outputs.acr_login_server }}/igormcplab:cache
-          cache-to: type=registry,ref=${{ needs.read-outputs.outputs.acr_login_server }}/igormcplab:cache,mode=max
+            ${{ steps.acr.outputs.login_server }}/igormcplab:${{ github.sha }}
+            ${{ steps.acr.outputs.login_server }}/igormcplab:latest
+          cache-from: type=registry,ref=${{ steps.acr.outputs.login_server }}/igormcplab:cache
+          cache-to: type=registry,ref=${{ steps.acr.outputs.login_server }}/igormcplab:cache,mode=max
 
-  # ── Plan: create HCP TF run with saved plan, show output ──────────────────
-  deploy-plan:
-    name: "HCP Terraform: Plan ACI deploy"
+  # ── Restart ACI to pick up the new image ──────────────────────────────────
+  # Terraform (managed by HCP TF via VCS) keeps the infrastructure stable.
+  # GitHub Actions only restarts the container to deploy new code.
+  restart-and-verify:
+    name: Restart & Smoke Test
     runs-on: ubuntu-latest
-    needs: [read-outputs, build-push]
-    env:
-      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-    outputs:
-      run_id: ${{ steps.create-run.outputs.run_id }}
-      plan_id: ${{ fromJSON(steps.create-run.outputs.payload).data.relationships.plan.data.id }}
+    needs: build-push
     steps:
-      - uses: actions/checkout@v5
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Generate Terraform variables (deploy)
-        working-directory: infra
+      - name: Restart ACI
         run: |
-          cat > run.auto.tfvars <<EOF
-          create_aci  = true
-          image_tag   = "${{ github.sha }}"
-          deployed_at = "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          EOF
-
-      - name: Upload Terraform configuration
-        id: upload
-        uses: hashicorp/tfc-workflows-github/actions/upload-configuration@v1.3.2
-        with:
-          workspace: ${{ env.TF_WORKSPACE }}
-          directory: infra
-
-      - name: Create HCP TF plan (saved, not yet applied)
-        id: create-run
-        uses: hashicorp/tfc-workflows-github/actions/create-run@v1.3.2
-        with:
-          workspace: ${{ env.TF_WORKSPACE }}
-          configuration_version: ${{ steps.upload.outputs.configuration_version_id }}
-          message: "Plan: deploy ACI ${{ github.sha }}"
-          save_plan: true
-
-      - name: Show plan summary
-        uses: hashicorp/tfc-workflows-github/actions/plan-output@v1.3.2
-        with:
-          plan: ${{ fromJSON(steps.create-run.outputs.payload).data.relationships.plan.data.id }}
-
-      - name: Write plan summary to GitHub step summary
-        run: |
-          echo "## Terraform Plan — review before approving apply" >> "$GITHUB_STEP_SUMMARY"
-          echo "| | Count |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Add | ${{ steps.create-run.outputs.payload && fromJSON(steps.create-run.outputs.payload).data.attributes.resource-additions || '?' }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "[View full plan in HCP Terraform](https://app.terraform.io/app/${{ env.TF_CLOUD_ORGANIZATION }}/workspaces/${{ env.TF_WORKSPACE }}/runs/${{ steps.create-run.outputs.run_id }})" >> "$GITHUB_STEP_SUMMARY"
-
-  # ── Apply: gated on your approval in the 'production' GitHub environment ──
-  deploy-apply:
-    name: "HCP Terraform: Apply ACI deploy"
-    runs-on: ubuntu-latest
-    needs: deploy-plan
-    environment: production    # ← pauses here; you approve after reviewing the plan
-    env:
-      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
-    steps:
-      - name: Apply saved plan
-        uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.3.2
-        with:
-          run: ${{ needs.deploy-plan.outputs.run_id }}
-          comment: "Approved by ${{ github.actor }} — applying ${{ github.sha }}"
-
-  # ── Health check + smoke tests ─────────────────────────────────────────────
-  smoke-test:
-    name: Smoke Test
-    runs-on: ubuntu-latest
-    needs: deploy-apply
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-          terraform_version: "~1.9"
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: infra
-        run: terraform init
-
-      - name: Read endpoints from HCP TF state
-        id: endpoints
-        working-directory: infra
-        run: |
-          echo "health_url=$(terraform output -raw mcp_health_url)" >> "$GITHUB_OUTPUT"
-          echo "mcp_url=$(terraform output -raw mcp_endpoint_url)" >> "$GITHUB_OUTPUT"
+          az container restart \
+            --resource-group rg-igormcplab \
+            --name aci-igormcplab
 
       - name: Wait for MCP server healthy (120s timeout)
         run: |
-          HEALTH_URL="${{ steps.endpoints.outputs.health_url }}"
+          HEALTH_URL="http://mcp-igormcplab.eastus.azurecontainer.io:3000/health"
           echo "Polling $HEALTH_URL"
           for i in $(seq 1 24); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
@@ -237,7 +101,7 @@ jobs:
 
       - name: Smoke test — tools/list
         run: |
-          RESPONSE=$(curl -s -X POST "${{ steps.endpoints.outputs.mcp_url }}" \
+          RESPONSE=$(curl -s -X POST "http://mcp-igormcplab.eastus.azurecontainer.io:3000/mcp" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
@@ -248,7 +112,7 @@ jobs:
 
       - name: Smoke test — echo invocation
         run: |
-          RESPONSE=$(curl -s -X POST "${{ steps.endpoints.outputs.mcp_url }}" \
+          RESPONSE=$(curl -s -X POST "http://mcp-igormcplab.eastus.azurecontainer.io:3000/mcp" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"text":"ping"}}}')
@@ -262,7 +126,7 @@ jobs:
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Health URL | ${{ steps.endpoints.outputs.health_url }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| MCP endpoint | ${{ steps.endpoints.outputs.mcp_url }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| HCP TF workspace | https://app.terraform.io/app/${{ env.TF_CLOUD_ORGANIZATION }}/workspaces/${{ env.TF_WORKSPACE }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${{ needs.build-push.outputs.acr_login_server }}/igormcplab:${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Health | http://mcp-igormcplab.eastus.azurecontainer.io:3000/health |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| HCP TF | https://app.terraform.io/app/gitIgorrz/workspaces/igor-mcp-lab |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHA run | https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} |" >> "$GITHUB_STEP_SUMMARY"
