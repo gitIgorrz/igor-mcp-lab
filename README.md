@@ -75,6 +75,59 @@ This server exposes three tools over HTTP:
 
 ---
 
+## How the CI/CD pipeline works
+
+Understanding where code actually runs helps when debugging failures.
+
+### Two separate execution environments
+
+```
+Your push to main
+       │
+       ├──► GitHub Actions runner (ubuntu-latest VM, ephemeral)
+       │         Runs: npm test, docker build, docker push, az container restart
+       │         Auth to Azure: GitHub OIDC → short-lived access token
+       │
+       └──► HCP Terraform agent (HCP-managed VM, ephemeral)
+                 Runs: terraform init, terraform plan, terraform apply
+                 Auth to Azure: ARM_* workspace env vars (client secret)
+```
+
+**GitHub Actions runners** are ephemeral Ubuntu VMs provided by GitHub. Each job gets a fresh VM. The VM clones your repository, runs the steps you define in the workflow, then is destroyed. GitHub Actions handles the Docker image build and push, and the ACI restart.
+
+**HCP Terraform agents** are ephemeral VMs managed by HashiCorp. When a run is triggered (by a VCS push or manually), HCP TF assigns it to an available agent. The agent downloads your Terraform configuration, runs `terraform init` to download providers, then `terraform plan` (and `terraform apply` after your approval). The agent is then destroyed. Your Terraform code never runs on your local machine or GitHub's runners.
+
+### Full push-to-deploy sequence
+
+```
+1. You merge a PR to main
+         │
+         ▼
+2. GitHub Actions deploy.yml starts
+   ├── test job runs on GitHub runner
+   ├── check-infra job: queries Azure to confirm infra exists
+   ├── build-push job: builds Docker image, pushes to ACR
+   └── restart-and-verify job: restarts ACI, polls /health, runs smoke tests
+
+3. (simultaneously) HCP TF VCS webhook fires
+   ├── HCP TF creates a new plan run
+   ├── Assigns to an available remote agent
+   ├── Agent: git clone → terraform init → terraform plan
+   ├── Plan result shown in HCP TF UI
+   └── You review the plan and click Confirm & Apply
+         │
+         ▼
+4. HCP TF apply run
+   ├── Same agent model: fresh VM, terraform apply
+   └── State saved back to HCP TF workspace
+```
+
+### Why two systems?
+
+Docker image builds require a full Linux environment with Docker installed — GitHub Actions runners handle this well. Terraform plans/applies require securely stored credentials and an audit trail of every infrastructure change — HCP Terraform is purpose-built for this. Separating them means each system does what it does best.
+
+---
+
 ## Repository structure
 
 ```

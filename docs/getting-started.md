@@ -12,9 +12,10 @@ deploy to Azure. Follow the steps in order.
 2. [Install tools](#2-install-tools)
 3. [Configure Git identity](#3-configure-git-identity)
 4. [Set up GPG commit signing](#4-set-up-gpg-commit-signing)
-5. [Authenticate the GitHub CLI](#5-authenticate-the-github-cli)
+5. [Authenticate Git and the GitHub CLI](#5-authenticate-git-and-the-github-cli)
 6. [Set up VS Code](#6-set-up-vs-code)
-7. [Clone the repo and make your first push](#7-clone-the-repo-and-make-your-first-push)
+7. [Branching strategy](#7-branching-strategy)
+8. [Clone the repo and make your first push](#8-clone-the-repo-and-make-your-first-push)
 
 ---
 
@@ -272,7 +273,68 @@ Open Settings (`Ctrl+,`) → click the `{}` icon (Open Settings JSON) and add:
 
 ---
 
-## 7. Clone the repo and make your first push
+## 7. Branching strategy
+
+This project uses a **trunk-based** approach: `main` is the single long-lived branch and represents what is deployed. All changes come in through short-lived branches and pull requests.
+
+### Branch naming
+
+```
+main  (protected — no direct pushes)
+ │
+ ├── feat/add-list-resources-tool     ← new features or capabilities
+ ├── fix/aci-probe-timeout            ← bug fixes
+ ├── chore/upgrade-node-24            ← maintenance: deps, CI config, tooling
+ ├── docs/update-readme               ← documentation only, no code change
+ └── refactor/extract-health-route    ← code restructure, no behaviour change
+```
+
+The branch name prefix must match the type used in the PR title (see below).
+
+### PR title convention (Conventional Commits)
+
+Every PR title follows the format `type: short description`:
+
+| Type | When to use | Example |
+|------|-------------|---------|
+| `feat:` | New tool, endpoint, or Azure resource | `feat: add list-subscriptions tool` |
+| `fix:` | Broken behaviour is corrected | `fix: suppress az container restart false negative` |
+| `chore:` | Tooling, CI, dependencies — no behaviour change | `chore: upgrade azurerm provider to 4.80` |
+| `docs:` | README, comments, changelog only | `docs: add getting-started guide` |
+| `refactor:` | Code restructured, same behaviour | `refactor: extract health route to separate module` |
+
+The title becomes the squash-merge commit message on `main`, so it needs to make sense on its own in `git log`.
+
+### What happens when you merge
+
+```
+main ◄── squash merge ◄── feat/my-new-tool
+  │
+  ├──► GitHub Actions (deploy.yml)
+  │     Test → Check infra → Docker build/push → ACI restart → Smoke tests
+  │
+  └──► HCP Terraform (VCS trigger)
+        Plan on a remote agent → you approve in HCP TF UI → apply
+```
+
+Both pipelines run in parallel automatically. You don't need to trigger anything manually beyond approving the Terraform apply in the HCP TF UI.
+
+### Rules enforced by branch protection
+
+| Rule | Why |
+|------|-----|
+| Direct pushes to `main` blocked | All changes must be reviewed |
+| 1 approving review required | A second pair of eyes before deploy |
+| `Build & Test` check must pass | Code must compile and tests must pass |
+| HCP TF speculative plan must pass | Infrastructure changes must be valid |
+| Stale reviews dismissed | Re-approval needed after new commits |
+| Conversation resolution required | All review comments must be addressed |
+
+> **As the repo owner** you can bypass these rules using "Merge without waiting for requirements" when necessary (e.g. a hotfix). Use this sparingly.
+
+---
+
+## 8. Clone the repo and make your first push
 
 ### Clone
 
@@ -295,6 +357,8 @@ npm install
 ```
 
 ### Make a change, branch, and open a PR
+
+The commands below apply the branching strategy from step 7.
 
 ```bash
 # 1. Always start from an up-to-date main
@@ -353,3 +417,4 @@ Alternatively, re-run `gh auth login` and choose to use HTTPS.
 ### `node: command not found` after installing Node.js
 
 Close and reopen your terminal — PATH needs to refresh. If still missing, restart your computer.
+
