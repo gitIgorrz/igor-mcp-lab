@@ -460,6 +460,17 @@ taking more than 15 seconds to initialise. Increase `initial_delay_seconds`.
 **Cause:** Git Bash translates `/subscriptions/...` to a Windows path.  
 **Fix:** Use PowerShell, or write the scope/path to a file and pass it with `@file.json`.
 
+### HCP TF apply: `InaccessibleImage` 400 error on ACI creation
+
+**Cause:** Terraform tried to create the ACI before the Docker image existed in ACR. Occurs on fresh deployments when Terraform and GitHub Actions run in parallel.
+
+**What happens now:** `null_resource.wait_for_image` polls ACR using the Docker v2 registry API (via the ARM client credentials from workspace env vars). The ACI creation is blocked until the image appears, up to 5 minutes. If it never appears, the apply fails with a clear message.
+
+**If it still fails after 5 minutes:** Check that the GitHub Actions `build-push` job completed successfully and the image is in ACR:
+```powershell
+az acr repository show-tags --name <acr-name> --repository <project> -o table
+```
+
 ### `az container restart` exits with `ERROR: Operation returned an invalid status 'OK'`
 
 **Cause:** Known Azure CLI bug — the restart API returns HTTP 200 OK, which the CLI incorrectly treats as an error. The restart actually succeeded.  
