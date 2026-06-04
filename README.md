@@ -340,6 +340,7 @@ Azure Portal → App registrations → `<your-app-name>` → **Certificates & se
 | Key | Category | Value | Sensitive |
 |-----|----------|-------|-----------|
 | `subscription_id` | Terraform | `<azure-subscription-id>` | No |
+| `sp_object_id` | Terraform | `<service-principal-object-id>` | No |
 | `location` | Terraform | `uksouth` *(or any Azure region)* | No |
 | `create_aci` | Terraform | `true` | No |
 | `image_tag` | Terraform | `latest` | No |
@@ -449,7 +450,16 @@ We ultimately switched to a client secret stored as a sensitive workspace variab
 
 ### Tearing down
 
-**HCP TF workspace → Settings → Destruction and Deletion → Queue destroy plan**
+**Before destroying**, remove the UAA role assignment from Terraform state — it has `prevent_destroy = true` and the SP cannot delete it anyway:
+
+```bash
+cd infra
+export TF_API_TOKEN="<your-hcp-tf-token>"   # or: terraform login
+terraform init
+terraform state rm azurerm_role_assignment.sp_uaa
+```
+
+Then: **HCP TF workspace → Settings → Destruction and Deletion → Queue destroy plan**
 
 Review the plan (all resources listed), then confirm. Never delete Azure resources manually — it creates drift in Terraform state.
 
