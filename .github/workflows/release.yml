@@ -1,0 +1,81 @@
+name: Release
+
+# Triggered manually from GitHub Actions UI:
+# Actions → Release → Run workflow → enter version → Run
+#
+# This workflow:
+#   1. Validates the version string (must be vX.Y.Z)
+#   2. Confirms the tag does not already exist
+#   3. Creates an annotated git tag on the current HEAD of main
+#   4. Creates a GitHub Release with notes from CHANGELOG.md
+#
+# You never need to run git tag locally — use this workflow instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. v0.1.0, v1.0.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as pre-release?"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write   # needed to create tags and releases
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # full history so git tag can see all existing tags
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: Version must be in the format vX.Y.Z (e.g. v0.1.0)"
+            exit 1
+          fi
+          echo "Version format OK: ${{ inputs.version }}"
+
+      - name: Check tag does not already exist
+        run: |
+          if git tag | grep -qx "${{ inputs.version }}"; then
+            echo "ERROR: Tag ${{ inputs.version }} already exists. Bump the version."
+            exit 1
+          fi
+          echo "Tag ${{ inputs.version }} is available."
+
+      - name: Create and push annotated tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ inputs.version }}" -m "Release ${{ inputs.version }}"
+          git push origin "${{ inputs.version }}"
+
+      - name: Create GitHub Release
+        run: |
+          PRERELEASE_FLAG=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "${{ inputs.version }}" \
+            --title "${{ inputs.version }}" \
+            --notes-file CHANGELOG.md \
+            $PRERELEASE_FLAG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## Released ${{ inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag created and pushed to GitHub" >> "$GITHUB_STEP_SUMMARY"
+          echo "- GitHub Release published" >> "$GITHUB_STEP_SUMMARY"
+          echo "- [View release](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.version }})" >> "$GITHUB_STEP_SUMMARY"
