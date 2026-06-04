@@ -5,9 +5,9 @@ variable "subscription_id" {
 }
 
 variable "location" {
-  description = "Azure region for all resources"
+  description = "Azure region for all resources. Override by setting 'location' as a Terraform variable in the HCP TF workspace. UK regions: uksouth (London), ukwest (Cardiff)."
   type        = string
-  default     = "eastus"
+  default     = "uksouth"
 }
 
 variable "project" {
