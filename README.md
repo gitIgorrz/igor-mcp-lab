@@ -113,6 +113,8 @@ igor-mcp-lab/
 
 ## Prerequisites
 
+> **Starting from scratch?** See [docs/getting-started.md](./docs/getting-started.md) for a complete walkthrough: installing tools, creating accounts, configuring Git, setting up GPG commit signing, and making your first push.
+
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Node.js | >= 20 | Run the server and tests locally |
@@ -120,6 +122,7 @@ igor-mcp-lab/
 | Terraform | >= 1.9 | Provision Azure infrastructure locally |
 | Azure CLI (`az`) | any | Authenticate to Azure |
 | GitHub CLI (`gh`) | any | Manage PRs and releases |
+| Git Credential Manager | bundled with Git for Windows | HTTPS authentication to GitHub (no SSH keys needed) |
 
 ---
 
