@@ -450,18 +450,15 @@ We ultimately switched to a client secret stored as a sensitive workspace variab
 
 ### Tearing down
 
-**Before destroying**, remove the UAA role assignment from Terraform state — it has `prevent_destroy = true` and the SP cannot delete it anyway:
+Use the **Destroy Infrastructure** GitHub Actions workflow — it removes the protected UAA role assignment from Terraform state automatically, then queues a HCP TF destroy plan for your approval:
 
-```bash
-cd infra
-export TF_API_TOKEN="<your-hcp-tf-token>"   # or: terraform login
-terraform init
-terraform state rm azurerm_role_assignment.sp_uaa
-```
+1. **Actions → Destroy Infrastructure → Run workflow**
+2. Type `DESTROY` in the confirmation field → **Run workflow**
+3. Follow the link in the job summary to review and approve the destroy in HCP TF UI
 
-Then: **HCP TF workspace → Settings → Destruction and Deletion → Queue destroy plan**
+The workflow removes `azurerm_role_assignment.sp_uaa` from state before triggering the plan (the SP cannot delete it due to its ABAC condition, so it stays in Azure but is untracked). The actual apply requires your approval in HCP TF UI.
 
-Review the plan (all resources listed), then confirm. Never delete Azure resources manually — it creates drift in Terraform state.
+Never delete Azure resources manually — it creates drift in Terraform state.
 
 ### Redeploying from scratch
 
