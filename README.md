@@ -277,7 +277,8 @@ az ad app create --display-name "<your-app-name>"
 
 # Create the service principal
 az ad sp create --id <appId>
-# Note the id (SP object ID) from the output
+# Note the id (SP object ID) from the output — you need this for the
+# sp_object_id Terraform workspace variable in HCP TF (step 4 below)
 
 # Grant Contributor on the subscription (for resource creation)
 az role assignment create \
@@ -340,6 +341,7 @@ Azure Portal → App registrations → `<your-app-name>` → **Certificates & se
 | Key | Category | Value | Sensitive |
 |-----|----------|-------|-----------|
 | `subscription_id` | Terraform | `<azure-subscription-id>` | No |
+| `sp_object_id` | Terraform | `<service-principal-object-id>` | No |
 | `location` | Terraform | `uksouth` *(or any Azure region)* | No |
 | `create_aci` | Terraform | `true` | No |
 | `image_tag` | Terraform | `latest` | No |
@@ -449,9 +451,15 @@ We ultimately switched to a client secret stored as a sensitive workspace variab
 
 ### Tearing down
 
-**HCP TF workspace → Settings → Destruction and Deletion → Queue destroy plan**
+Use the **Destroy Infrastructure** GitHub Actions workflow — it removes the protected UAA role assignment from Terraform state automatically, then queues a HCP TF destroy plan for your approval:
 
-Review the plan (all resources listed), then confirm. Never delete Azure resources manually — it creates drift in Terraform state.
+1. **Actions → Destroy Infrastructure → Run workflow**
+2. Type `DESTROY` in the confirmation field → **Run workflow**
+3. Follow the link in the job summary to review and approve the destroy in HCP TF UI
+
+The workflow removes `azurerm_role_assignment.sp_uaa` from state before triggering the plan (the SP cannot delete it due to its ABAC condition, so it stays in Azure but is untracked). The actual apply requires your approval in HCP TF UI.
+
+Never delete Azure resources manually — it creates drift in Terraform state.
 
 ### Redeploying from scratch
 

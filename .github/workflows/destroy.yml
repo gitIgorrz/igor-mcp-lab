@@ -1,0 +1,92 @@
+name: Destroy Infrastructure
+
+# Triggered manually from GitHub Actions UI.
+# Removes the protected UAA role assignment from Terraform state (the SP cannot
+# delete it due to ABAC, so we remove it from state rather than destroying it in
+# Azure), then triggers a HCP Terraform destroy plan.
+#
+# The actual destroy apply requires your approval in the HCP TF UI — this
+# workflow handles the state cleanup but keeps the human in the loop for the
+# destructive operation.
+#
+# Usage: Actions → Destroy Infrastructure → Run workflow → type DESTROY → Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DESTROY to confirm (case-sensitive)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TF_CLOUD_ORGANIZATION: gitIgorrz
+  TF_WORKSPACE: igor-mcp-lab
+
+jobs:
+  destroy:
+    name: Prepare and queue destroy
+    runs-on: ubuntu-latest
+    env:
+      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "DESTROY" ]; then
+            echo "ERROR: Confirmation must be exactly 'DESTROY'. Got: '${{ inputs.confirm }}'"
+            exit 1
+          fi
+          echo "Confirmation accepted."
+
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          terraform_version: "~1.9"
+          terraform_wrapper: false
+
+      - name: Terraform Init (connect to remote state)
+        working-directory: infra
+        run: terraform init
+
+      - name: Remove UAA role assignment from state
+        working-directory: infra
+        run: |
+          # azurerm_role_assignment.sp_uaa has prevent_destroy = true and the
+          # SP cannot delete it (ABAC condition). We remove it from state so the
+          # destroy plan does not attempt to delete it in Azure.
+          # The role assignment stays in Azure — only the Terraform tracking is removed.
+          if terraform state list | grep -q "azurerm_role_assignment.sp_uaa"; then
+            terraform state rm azurerm_role_assignment.sp_uaa
+            echo "Removed azurerm_role_assignment.sp_uaa from state."
+          else
+            echo "azurerm_role_assignment.sp_uaa not in state — nothing to remove."
+          fi
+
+      - name: Create HCP TF destroy plan
+        id: destroy-run
+        uses: hashicorp/tfc-workflows-github/actions/create-run@v1.3.2
+        with:
+          workspace: ${{ env.TF_WORKSPACE }}
+          is_destroy: true
+          message: "Destroy triggered by ${{ github.actor }} via GitHub Actions"
+
+      - name: Summary
+        run: |
+          echo "## Destroy plan queued" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The UAA role assignment has been removed from Terraform state." >> "$GITHUB_STEP_SUMMARY"
+          echo "A destroy plan is waiting for your approval in HCP Terraform." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**[Review and approve the destroy in HCP TF →](https://app.terraform.io/app/${{ env.TF_CLOUD_ORGANIZATION }}/workspaces/${{ env.TF_WORKSPACE }}/runs/${{ steps.destroy-run.outputs.run_id }})**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Run ID | \`${{ steps.destroy-run.outputs.run_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered by | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
