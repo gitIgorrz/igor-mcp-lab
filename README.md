@@ -239,12 +239,15 @@ Azure Portal → App registrations → `<your-app-name>` → **Certificates & se
 | Key | Category | Value | Sensitive |
 |-----|----------|-------|-----------|
 | `subscription_id` | Terraform | `<azure-subscription-id>` | No |
+| `location` | Terraform | `uksouth` *(or any Azure region)* | No |
 | `create_aci` | Terraform | `true` | No |
 | `image_tag` | Terraform | `latest` | No |
 | `ARM_CLIENT_ID` | Environment | `<app-registration-client-id>` | No |
 | `ARM_TENANT_ID` | Environment | `<azure-tenant-id>` | No |
 | `ARM_SUBSCRIPTION_ID` | Environment | `<azure-subscription-id>` | No |
 | `ARM_CLIENT_SECRET` | Environment | `<client-secret-value>` | **Yes** |
+
+> **Choosing a region:** `location` defaults to `uksouth` (London). To use a different region, set the `location` workspace variable to any valid Azure region name (e.g. `ukwest`, `westeurope`, `eastus`). Run `az account list-locations -o table` to see all options. The ACI endpoint FQDN changes with the region — the deploy pipeline reads it dynamically from Azure so no workflow change is needed.
 
 #### 5. GitHub — Repository secrets
 
