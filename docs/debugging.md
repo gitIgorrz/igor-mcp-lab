@@ -105,7 +105,7 @@ gh pr create \
   --body "Appends || true to suppress HTTP 200 OK being treated as error."
 
 # List open PRs
-gh pr list --repo gitIgorrz/igor-mcp-lab
+gh pr list --repo <owner>/<repo>
 
 # Merge a PR (squash = one clean commit on main, admin = bypass review if needed)
 gh pr merge 4 --squash --delete-branch
@@ -238,20 +238,20 @@ az account show
 az group list --query "[].{name:name, location:location, state:properties.provisioningState}" -o table
 
 # Check a specific group
-az group show --name rg-igormcplab --query "{name:name, state:properties.provisioningState}"
+az group show --name rg-<project> --query "{name:name, state:properties.provisioningState}"
 ```
 
 ### Azure Container Registry (ACR)
 
 ```powershell
 # List ACR instances in the resource group
-az acr list --resource-group rg-igormcplab --query "[].{name:name, loginServer:loginServer}" -o table
+az acr list --resource-group rg-<project> --query "[].{name:name, loginServer:loginServer}" -o table
 
 # List repositories (images) in the ACR
-az acr repository list --name igormcplabl5wp0w -o table
+az acr repository list --name <acr-name> -o table
 
 # Show tags for a specific image
-az acr repository show-tags --name igormcplabl5wp0w --repository igormcplab -o table
+az acr repository show-tags --name <acr-name> --repository <image-name> -o table
 ```
 
 ### Azure Container Instance (ACI)
@@ -259,15 +259,15 @@ az acr repository show-tags --name igormcplabl5wp0w --repository igormcplab -o t
 ```powershell
 # Check container group state and restart count
 az container show `
-  --resource-group rg-igormcplab `
-  --name aci-igormcplab `
+  --resource-group rg-<project> `
+  --name aci-<project> `
   --query "{state:instanceView.state, restartCount:containers[0].instanceView.restartCount, currentState:containers[0].instanceView.currentState.state}" `
   -o table
 
 # Get recent events (probe failures, image pulls, kills)
 az container show `
-  --resource-group rg-igormcplab `
-  --name aci-igormcplab `
+  --resource-group rg-<project> `
+  --name aci-<project> `
   --query "containers[0].instanceView.events[*].{message:message, type:type, firstTimestamp:firstTimestamp}" `
   -o table
 ```
@@ -285,14 +285,14 @@ az container show `
 ```powershell
 # List all role assignments for the service principal
 az role assignment list `
-  --assignee "93a2b41a-81a0-45f9-b6c8-981e16283020" `
+  --assignee "<sp-object-id>" `
   --all `
   --query "[].{role:roleDefinitionName, scope:scope, condition:condition}" `
   -o table
 
 # List federated credentials on the app registration
 az ad app federated-credential list `
-  --id "210688e2-5176-4cf6-b805-8ece29db7998" `
+  --id "<app-object-id>" `
   --query "[].{name:name, issuer:issuer, subject:subject}" `
   -o table
 ```
@@ -301,10 +301,10 @@ az ad app federated-credential list `
 
 ```powershell
 # Hit the health endpoint directly (bypasses ACI probes)
-curl -s http://mcp-igormcplab.eastus.azurecontainer.io:3000/health
+curl -s http://<aci-fqdn>:3000/health
 
 # Call the echo tool directly
-curl -s -X POST http://mcp-igormcplab.eastus.azurecontainer.io:3000/mcp `
+curl -s -X POST http://<aci-fqdn>:3000/mcp `
   -H "Content-Type: application/json" `
   -H "Accept: application/json, text/event-stream" `
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"text":"ping"}}}'
@@ -317,7 +317,7 @@ curl -s -X POST http://mcp-igormcplab.eastus.azurecontainer.io:3000/mcp `
 ### List recent runs
 
 ```powershell
-gh run list --repo gitIgorrz/igor-mcp-lab --limit 10
+gh run list --repo <owner>/<repo> --limit 10
 ```
 
 Output columns: status, name, workflow, branch, event, run ID, duration, created.
@@ -325,7 +325,7 @@ Output columns: status, name, workflow, branch, event, run ID, duration, created
 ### Watch a run live
 
 ```powershell
-gh run watch <run-id> --repo gitIgorrz/igor-mcp-lab
+gh run watch <run-id> --repo <owner>/<repo>
 # Refreshes every 3s. Press Ctrl+C to stop watching (run continues).
 ```
 
@@ -333,10 +333,10 @@ gh run watch <run-id> --repo gitIgorrz/igor-mcp-lab
 
 ```powershell
 # Show all failed step logs
-gh run view <run-id> --repo gitIgorrz/igor-mcp-lab --log-failed
+gh run view <run-id> --repo <owner>/<repo> --log-failed
 
 # Filter for specific error keywords
-gh run view <run-id> --repo gitIgorrz/igor-mcp-lab --log-failed 2>&1 |
+gh run view <run-id> --repo <owner>/<repo> --log-failed 2>&1 |
   Select-String "Error:|failed|invalid|missing" |
   Select-Object -First 20
 ```
@@ -344,16 +344,16 @@ gh run view <run-id> --repo gitIgorrz/igor-mcp-lab --log-failed 2>&1 |
 ### Check PR status checks
 
 ```powershell
-gh pr checks <pr-number> --repo gitIgorrz/igor-mcp-lab
+gh pr checks <pr-number> --repo <owner>/<repo>
 ```
 
 ### Re-run a failed job
 
 ```powershell
-gh run rerun <run-id> --repo gitIgorrz/igor-mcp-lab
+gh run rerun <run-id> --repo <owner>/<repo>
 
 # Re-run only the failed jobs (not the whole run)
-gh run rerun <run-id> --repo gitIgorrz/igor-mcp-lab --failed
+gh run rerun <run-id> --repo <owner>/<repo> --failed
 ```
 
 **What to look for in GitHub Actions logs:**
@@ -369,7 +369,7 @@ gh run rerun <run-id> --repo gitIgorrz/igor-mcp-lab --failed
 ### Finding runs
 
 All runs for this workspace:  
-`https://app.terraform.io/app/gitIgorrz/workspaces/igor-mcp-lab/runs`
+`https://app.terraform.io/app/<your-org>/workspaces/<your-workspace>/runs`
 
 Each run has:
 - **Plan log** — full Terraform output including provider initialisation messages
@@ -388,13 +388,13 @@ Each run has:
 
 ### Workspace ID
 
-The workspace ID `ws-DYgJU2Vef2gCRb3h` can be used directly in HCP TF API calls
-if you ever need to automate workspace operations:
+Your workspace ID (format: `ws-XXXXXXXXXXXXXXXX`) is shown at the top of
+**Settings → General** in the HCP TF UI. It can be used directly in API calls:
 
 ```bash
 curl -s \
   -H "Authorization: Bearer $TF_API_TOKEN" \
-  "https://app.terraform.io/api/v2/workspaces/ws-DYgJU2Vef2gCRb3h/runs" \
+  "https://app.terraform.io/api/v2/workspaces/<workspace-id>/runs" \
   | jq '.data[0] | {id: .id, status: .attributes.status}'
 ```
 
@@ -406,27 +406,27 @@ curl -s \
 
 ```powershell
 az container logs `
-  --resource-group rg-igormcplab `
-  --name aci-igormcplab
+  --resource-group rg-<project> `
+  --name aci-<project>
 
 # Follow logs (streams until Ctrl+C)
 az container logs `
-  --resource-group rg-igormcplab `
-  --name aci-igormcplab `
+  --resource-group rg-<project> `
+  --name aci-<project> `
   --follow
 ```
 
 A healthy startup produces exactly one log line:
 
 ```
-igor-mcp-lab listening on :3000
+<your-server-name> listening on :3000
 ```
 
 If you see no output or an error before that line, the container is crashing before Express starts.
 
 ### Azure Portal — Events tab
 
-For visual event history: Azure Portal → Container instances → `aci-igormcplab` → **Events** tab.
+For visual event history: Azure Portal → Container instances → `aci-<project>` → **Events** tab.
 
 Events show probe failures with timestamps and counts, which helps distinguish:
 - **Transient** probe failures (3 failures then recovers) — usually a slow cold start; increase `initial_delay_seconds` in `infra/main.tf`
@@ -473,13 +473,13 @@ doesn't match the workflow trigger.
 ```powershell
 # Verify federated credentials registered
 az ad app federated-credential list `
-  --id "210688e2-5176-4cf6-b805-8ece29db7998" `
+  --id "<app-object-id>" `
   --query "[].{name:name,subject:subject}" -o table
 ```
 
 Expected subjects:
-- `repo:gitIgorrz/igor-mcp-lab:ref:refs/heads/main` — for push to main
-- `repo:gitIgorrz/igor-mcp-lab:pull_request` — for PRs
+- `repo:<owner>/<repo>:ref:refs/heads/main` — for push to main
+- `repo:<owner>/<repo>:pull_request` — for PRs
 
 ### HCP TF plan: `missing required value(s): Azure client ID`
 
@@ -522,8 +522,8 @@ See the `@Resource` vs `@Request` explanation in the session history.
 
 | Resource | URL |
 |----------|-----|
-| HCP TF workspace runs | https://app.terraform.io/app/gitIgorrz/workspaces/igor-mcp-lab/runs |
-| GitHub Actions | https://github.com/gitIgorrz/igor-mcp-lab/actions |
-| Azure portal — resource group | https://portal.azure.com → Resource groups → rg-igormcplab |
+| HCP TF workspace runs | `https://app.terraform.io/app/<your-org>/workspaces/<your-workspace>/runs` |
+| GitHub Actions | `https://github.com/<owner>/<repo>/actions` |
+| Azure portal — resource group | https://portal.azure.com → Resource groups → rg-<project> |
 | MCP protocol spec | https://modelcontextprotocol.io/specification |
 | azurerm provider docs | https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs |

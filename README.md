@@ -39,7 +39,7 @@ This server exposes three tools over HTTP:
          ▼                        ▼
 ┌─────────────────┐    ┌──────────────────────┐
 │  HCP Terraform  │    │     Azure ACR        │
-│  Remote exec    │    │  igormcplab:latest   │
+│  Remote exec    │    │  <project>:latest    │
 │                 │    └──────────┬───────────┘
 │  PR  → plan     │               │ image pull
 │  main → apply   │               │
@@ -50,7 +50,7 @@ This server exposes three tools over HTTP:
 ┌────────────────────────────────────────────────────┐
 │                    Azure                           │
 │                                                    │
-│  Resource Group: rg-igormcplab (eastus)            │
+│  Resource Group: rg-<project> (<region>)           │
 │                                                    │
 │  ┌──────────────┐  AcrPull  ┌───────────────────┐ │
 │  │   Managed    │──────────►│  Container        │ │
@@ -171,7 +171,7 @@ This section documents every manual step required to stand up the full stack fro
 
 ```bash
 # Create the app registration
-az ad app create --display-name "igor-mcp-lab"
+az ad app create --display-name "<your-app-name>"
 # Note the appId (client ID) and id (object ID) from the output
 
 # Create the service principal
@@ -223,14 +223,14 @@ az ad app federated-credential create --id <app-object-id> --parameters '{
 
 HCP Terraform remote execution cannot use GitHub Actions OIDC tokens (they are bound to the GitHub Actions runner, not the HCP TF runner). A service principal client secret is used instead.
 
-Azure Portal → App registrations → `igor-mcp-lab` → **Certificates & secrets** → **New client secret** → copy the **Value** (shown once only).
+Azure Portal → App registrations → `<your-app-name>` → **Certificates & secrets** → **New client secret** → copy the **Value** (shown once only).
 
 > See [Automation opportunities](#automation-opportunities) for how this could be replaced with OIDC in future.
 
 #### 4. HCP Terraform — Workspace
 
 1. Log in to [app.terraform.io](https://app.terraform.io)
-2. Create workspace: org `gitIgorrz` → project `igor-lab` → **New workspace** → **VCS-driven**
+2. Create workspace: org `<your-org>` → project `<your-project>` → **New workspace** → **VCS-driven**
 3. Connect to the GitHub repo; set Terraform working directory to `infra`
 4. Set execution mode: **Remote**
 5. Disable auto-apply (so you can review plans before they apply)
@@ -283,14 +283,14 @@ The [HCP Terraform provider](https://registry.terraform.io/providers/hashicorp/t
 
 ```hcl
 resource "tfe_workspace" "mcp_lab" {
-  name         = "igor-mcp-lab"
-  organization = "gitIgorrz"
-  project_id   = data.tfe_project.igor_lab.id
+  name         = "<your-workspace-name>"
+  organization = "<your-org>"
+  project_id   = data.tfe_project.your_project.id
   execution_mode       = "remote"
   auto_apply           = false
   working_directory    = "infra"
   vcs_repo {
-    identifier     = "gitIgorrz/igor-mcp-lab"
+    identifier     = "<github-owner>/<repo-name>"
     branch         = "main"
     oauth_token_id = var.github_oauth_token_id
   }
@@ -331,7 +331,7 @@ Despite following the documented configuration exactly, `ARM_CLIENT_ID` was neve
 
 We ultimately switched to a client secret stored as a sensitive workspace variable. This is the same approach used in other workspaces on this account.
 
-**If you want to retry DPC:** Open a support ticket with HashiCorp including workspace ID `ws-DYgJU2Vef2gCRb3h` and the reproducible error. The configuration appears correct per the documentation; the failure is likely a workspace-level platform issue.
+**If you want to retry DPC:** Open a support ticket with HashiCorp including your workspace ID (found at Settings → General in the workspace) and the reproducible error. The configuration appears correct per the documentation; the failure is likely a workspace-level platform issue.
 
 ---
 
