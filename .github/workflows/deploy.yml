@@ -105,11 +105,6 @@ jobs:
             --name "${{ env.ACI_NAME }}" \
             --query "ipAddress.fqdn" -o tsv 2>/dev/null || echo "")
           echo "aci_fqdn=$FQDN" >> "$GITHUB_OUTPUT"
-          else
-            echo "deployed=false" >> "$GITHUB_OUTPUT"
-            echo "aci_fqdn=" >> "$GITHUB_OUTPUT"
-            echo "::notice::Resource group '${{ env.RESOURCE_GROUP }}' not found — infrastructure is not deployed. Skipping Docker push and restart. Follow the 'Redeploying from scratch' guide in README.md."
-          fi
 
   # ── Build & push Docker image to ACR ──────────────────────────────────────
   build-push:
