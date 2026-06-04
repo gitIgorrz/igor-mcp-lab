@@ -277,7 +277,8 @@ az ad app create --display-name "<your-app-name>"
 
 # Create the service principal
 az ad sp create --id <appId>
-# Note the id (SP object ID) from the output
+# Note the id (SP object ID) from the output — you need this for the
+# sp_object_id Terraform workspace variable in HCP TF (step 4 below)
 
 # Grant Contributor on the subscription (for resource creation)
 az role assignment create \
