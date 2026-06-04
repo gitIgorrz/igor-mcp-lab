@@ -277,8 +277,7 @@ az ad app create --display-name "<your-app-name>"
 
 # Create the service principal
 az ad sp create --id <appId>
-# Note the id (SP object ID) from the output — you need this for the
-# sp_object_id Terraform workspace variable in HCP TF (step 4 below)
+# Note the id (SP object ID) — you need this for the UAA role assignment step below
 
 # Grant Contributor on the subscription (for resource creation)
 az role assignment create \
@@ -341,7 +340,6 @@ Azure Portal → App registrations → `<your-app-name>` → **Certificates & se
 | Key | Category | Value | Sensitive |
 |-----|----------|-------|-----------|
 | `subscription_id` | Terraform | `<azure-subscription-id>` | No |
-| `sp_object_id` | Terraform | `<service-principal-object-id>` | No |
 | `location` | Terraform | `uksouth` *(or any Azure region)* | No |
 | `create_aci` | Terraform | `true` | No |
 | `image_tag` | Terraform | `latest` | No |
