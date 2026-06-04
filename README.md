@@ -75,6 +75,59 @@ This server exposes three tools over HTTP:
 
 ---
 
+## How the CI/CD pipeline works
+
+Understanding where code actually runs helps when debugging failures.
+
+### Two separate execution environments
+
+```
+Your push to main
+       │
+       ├──► GitHub Actions runner (ubuntu-latest VM, ephemeral)
+       │         Runs: npm test, docker build, docker push, az container restart
+       │         Auth to Azure: GitHub OIDC → short-lived access token
+       │
+       └──► HCP Terraform agent (HCP-managed VM, ephemeral)
+                 Runs: terraform init, terraform plan, terraform apply
+                 Auth to Azure: ARM_* workspace env vars (client secret)
+```
+
+**GitHub Actions runners** are ephemeral Ubuntu VMs provided by GitHub. Each job gets a fresh VM. The VM clones your repository, runs the steps you define in the workflow, then is destroyed. GitHub Actions handles the Docker image build and push, and the ACI restart.
+
+**HCP Terraform agents** are ephemeral VMs managed by HashiCorp. When a run is triggered (by a VCS push or manually), HCP TF assigns it to an available agent. The agent downloads your Terraform configuration, runs `terraform init` to download providers, then `terraform plan` (and `terraform apply` after your approval). The agent is then destroyed. Your Terraform code never runs on your local machine or GitHub's runners.
+
+### Full push-to-deploy sequence
+
+```
+1. You merge a PR to main
+         │
+         ▼
+2. GitHub Actions deploy.yml starts
+   ├── test job runs on GitHub runner
+   ├── check-infra job: queries Azure to confirm infra exists
+   ├── build-push job: builds Docker image, pushes to ACR
+   └── restart-and-verify job: restarts ACI, polls /health, runs smoke tests
+
+3. (simultaneously) HCP TF VCS webhook fires
+   ├── HCP TF creates a new plan run
+   ├── Assigns to an available remote agent
+   ├── Agent: git clone → terraform init → terraform plan
+   ├── Plan result shown in HCP TF UI
+   └── You review the plan and click Confirm & Apply
+         │
+         ▼
+4. HCP TF apply run
+   ├── Same agent model: fresh VM, terraform apply
+   └── State saved back to HCP TF workspace
+```
+
+### Why two systems?
+
+Docker image builds require a full Linux environment with Docker installed — GitHub Actions runners handle this well. Terraform plans/applies require securely stored credentials and an audit trail of every infrastructure change — HCP Terraform is purpose-built for this. Separating them means each system does what it does best.
+
+---
+
 ## Repository structure
 
 ```
@@ -113,6 +166,8 @@ igor-mcp-lab/
 
 ## Prerequisites
 
+> **Starting from scratch?** See [docs/getting-started.md](./docs/getting-started.md) for a complete walkthrough: installing tools, creating accounts, configuring Git, setting up GPG commit signing, and making your first push.
+
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Node.js | >= 20 | Run the server and tests locally |
@@ -120,6 +175,7 @@ igor-mcp-lab/
 | Terraform | >= 1.9 | Provision Azure infrastructure locally |
 | Azure CLI (`az`) | any | Authenticate to Azure |
 | GitHub CLI (`gh`) | any | Manage PRs and releases |
+| Git Credential Manager | bundled with Git for Windows | HTTPS authentication to GitHub (no SSH keys needed) |
 
 ---
 
@@ -162,6 +218,51 @@ curl -s -X POST http://localhost:3000/mcp \
 ---
 
 ## Deployment
+
+### Make it your own
+
+If you are forking or adapting this project, change these three files before deploying:
+
+**1. `infra/variables.tf` — project name and region**
+
+```hcl
+variable "project" {
+  default = "igormcplab"   # ← change to your project name (alphanumeric, no hyphens)
+}
+
+variable "location" {
+  default = "uksouth"      # ← change to your preferred Azure region
+}
+```
+
+This single `project` value drives all Azure resource names: the resource group (`rg-<project>`), container registry, container instance, managed identity, and DNS label.
+
+**2. `infra/backend.tf` — HCP Terraform workspace**
+
+```hcl
+cloud {
+  organization = "gitIgorrz"     # ← your HCP TF organisation name
+  workspaces {
+    name = "igor-mcp-lab"        # ← your workspace name
+  }
+}
+```
+
+**3. `.github/workflows/deploy.yml` — workflow resource names**
+
+```yaml
+env:
+  RESOURCE_GROUP: rg-igormcplab    # ← rg-<your-project>
+  ACI_NAME: aci-igormcplab         # ← aci-<your-project>
+  IMAGE_REPO: igormcplab           # ← <your-project>
+  TF_WORKSPACE_URL: https://app.terraform.io/app/gitIgorrz/workspaces/igor-mcp-lab
+  #                                               ^^^^^^^^^^               ^^^^^^^^^^^^
+  #                                               your org                 your workspace
+```
+
+After these three changes, complete the one-time manual setup below to provision the Azure identity and HCP TF workspace.
+
+---
 
 ### One-time manual setup
 
