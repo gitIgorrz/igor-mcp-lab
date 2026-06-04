@@ -163,6 +163,51 @@ curl -s -X POST http://localhost:3000/mcp \
 
 ## Deployment
 
+### Make it your own
+
+If you are forking or adapting this project, change these three files before deploying:
+
+**1. `infra/variables.tf` — project name and region**
+
+```hcl
+variable "project" {
+  default = "igormcplab"   # ← change to your project name (alphanumeric, no hyphens)
+}
+
+variable "location" {
+  default = "uksouth"      # ← change to your preferred Azure region
+}
+```
+
+This single `project` value drives all Azure resource names: the resource group (`rg-<project>`), container registry, container instance, managed identity, and DNS label.
+
+**2. `infra/backend.tf` — HCP Terraform workspace**
+
+```hcl
+cloud {
+  organization = "gitIgorrz"     # ← your HCP TF organisation name
+  workspaces {
+    name = "igor-mcp-lab"        # ← your workspace name
+  }
+}
+```
+
+**3. `.github/workflows/deploy.yml` — workflow resource names**
+
+```yaml
+env:
+  RESOURCE_GROUP: rg-igormcplab    # ← rg-<your-project>
+  ACI_NAME: aci-igormcplab         # ← aci-<your-project>
+  IMAGE_REPO: igormcplab           # ← <your-project>
+  TF_WORKSPACE_URL: https://app.terraform.io/app/gitIgorrz/workspaces/igor-mcp-lab
+  #                                               ^^^^^^^^^^               ^^^^^^^^^^^^
+  #                                               your org                 your workspace
+```
+
+After these three changes, complete the one-time manual setup below to provision the Azure identity and HCP TF workspace.
+
+---
+
 ### One-time manual setup
 
 This section documents every manual step required to stand up the full stack from scratch.
