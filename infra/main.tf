@@ -1,10 +1,9 @@
 provider "azurerm" {
   features {}
-  use_oidc        = true
   subscription_id = var.subscription_id
-  # HCP Terraform DPC injects ARM_OIDC_TOKEN, ARM_CLIENT_ID, ARM_TENANT_ID,
-  # ARM_SUBSCRIPTION_ID at run time via TFC_AZURE_* workspace env vars.
-  # No client secrets stored anywhere.
+  # ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID, ARM_CLIENT_SECRET
+  # are set as Environment Variables in the HCP Terraform workspace.
+  # The secret is stored only in HCP TF's encrypted variable store — never in code.
 }
 
 resource "random_string" "suffix" {
