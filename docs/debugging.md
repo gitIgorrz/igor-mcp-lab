@@ -460,6 +460,12 @@ taking more than 15 seconds to initialise. Increase `initial_delay_seconds`.
 **Cause:** Git Bash translates `/subscriptions/...` to a Windows path.  
 **Fix:** Use PowerShell, or write the scope/path to a file and pass it with `@file.json`.
 
+### Pipeline skips Docker push with "infrastructure not deployed" notice
+
+**Cause:** The `check-infra` pre-flight job in `deploy.yml` confirmed that the Azure resource group does not exist. This is expected after a `terraform destroy`.  
+**This is not an error** — tests still pass and code quality is validated. The Docker push and ACI restart are intentionally skipped.  
+**To resume:** follow the **Redeploying from scratch** section in `README.md`. Once the resource group exists again, the pipeline will proceed automatically on the next push.
+
 ### `az container restart` exits with `ERROR: Operation returned an invalid status 'OK'`
 
 **Cause:** Known Azure CLI bug — the restart API returns HTTP 200 OK, which the CLI incorrectly treats as an error. The restart actually succeeded.  

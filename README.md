@@ -340,8 +340,33 @@ We ultimately switched to a client secret stored as a sensitive workspace variab
 1. Create a branch: `feat/your-change`
 2. Open a PR — `pr-checks.yml` runs build + test; HCP TF shows a speculative plan
 3. Approve and merge the PR
-4. `deploy.yml` runs: tests → Docker build + push → ACI restart → smoke tests
+4. `deploy.yml` runs: tests → infrastructure check → Docker build + push → ACI restart → smoke tests
 5. HCP TF triggers a plan; review it in the HCP TF UI → **Confirm & Apply**
+
+### Pipeline behaviour when infrastructure is not deployed
+
+The `deploy.yml` pipeline includes a `check-infra` pre-flight job that checks whether the Azure resource group exists before attempting to push a Docker image or restart ACI. If infrastructure has been torn down, the pipeline exits cleanly with a notice rather than failing:
+
+```
+::notice::Resource group 'rg-<project>' not found — infrastructure is not deployed.
+Skipping Docker push and restart. Follow the 'Redeploying from scratch' guide.
+```
+
+Tests still run on every push regardless of infrastructure state, so code quality is always validated.
+
+### Resource names in the pipeline
+
+All hardcoded Azure resource names in `deploy.yml` are consolidated at the top of the file as workflow-level `env` vars:
+
+```yaml
+env:
+  RESOURCE_GROUP: rg-<project>
+  ACI_NAME: aci-<project>
+  ACI_FQDN: mcp-<project>.<region>.azurecontainer.io
+  IMAGE_REPO: <project>
+```
+
+After redeployment, update these in one place if resource names change (e.g. after a `terraform destroy` + redeploy creates a new ACR with a different random suffix).
 
 ### Tearing down
 
@@ -349,11 +374,18 @@ We ultimately switched to a client secret stored as a sensitive workspace variab
 
 Review the plan (all resources listed), then confirm. Never delete Azure resources manually — it creates drift in Terraform state.
 
+After the destroy completes, pushes to `main` will skip the Docker/ACI steps automatically until infrastructure is redeployed.
+
 ### Redeploying from scratch
 
-1. Set `create_aci = false` in HCP TF workspace Terraform variables (temporarily)
-2. Push a commit to `main` — GitHub Actions pushes the Docker image; HCP TF creates the ACR
-3. Set `create_aci = true`, trigger a new HCP TF run — ACI is created with the image in place
+After a `terraform destroy`, the resource group, ACR, and ACI no longer exist. Because the ACR gets a new random suffix on each deployment, the ACR name in `deploy.yml` will also need updating after the first Terraform apply creates the new ACR.
+
+1. Set `create_aci = false` in HCP TF workspace Terraform variables
+2. Trigger a HCP TF run (or push a commit to `main`) — HCP TF creates the ACR; GitHub Actions skips the Docker push (no ACR yet)
+3. Update `RESOURCE_GROUP`, `ACI_NAME`, `ACI_FQDN`, `IMAGE_REPO` in `deploy.yml` if any names changed, then push
+4. The pipeline's `check-infra` step now finds the resource group → Docker image is built and pushed to the new ACR
+5. Set `create_aci = true` in HCP TF workspace variables, trigger a new HCP TF run → ACI created with the image
+6. Subsequent pushes deploy normally
 
 ---
 
