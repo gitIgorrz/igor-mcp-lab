@@ -50,3 +50,8 @@ variable "deployed_at" {
   default     = "unknown"
 }
 
+variable "sp_object_id" {
+  description = "Object ID of the service principal that Terraform runs as. Used to define the constrained User Access Administrator role assignment. Set as a Terraform variable in the HCP TF workspace. Find it with: az ad sp show --id <client-id> --query id -o tsv"
+  type        = string
+}
+
