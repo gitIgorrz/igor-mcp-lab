@@ -11,6 +11,14 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # ── Project-specific names ────────────────────────────────────────────────
+  # These are derived from the Terraform `project` variable (default: igormcplab).
+  # Update here if you change the project name or region.
+  RESOURCE_GROUP: rg-igormcplab
+  ACI_NAME: aci-igormcplab
+  ACI_FQDN: mcp-igormcplab.eastus.azurecontainer.io
+  IMAGE_REPO: igormcplab          # must match the image name in the Dockerfile/Terraform
+  TF_WORKSPACE_URL: https://app.terraform.io/app/gitIgorrz/workspaces/igor-mcp-lab
 
 jobs:
   # ── Gate 1: tests must pass before image is pushed ─────────────────────────
@@ -28,11 +36,40 @@ jobs:
       - run: npm run build
       - run: npm run test:built
 
+  # ── Pre-flight: check whether infrastructure is deployed ───────────────────
+  # Skips the Docker push and restart if the resource group doesn't exist.
+  # This prevents cryptic failures after a terraform destroy — the pipeline
+  # exits cleanly with a notice instead of erroring on a missing ACR.
+  check-infra:
+    name: Check infrastructure
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      deployed: ${{ steps.check.outputs.deployed }}
+    steps:
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check if resource group exists
+        id: check
+        run: |
+          if az group show --name "${{ env.RESOURCE_GROUP }}" &>/dev/null 2>&1; then
+            echo "deployed=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Resource group '${{ env.RESOURCE_GROUP }}' not found — infrastructure is not deployed. Skipping Docker push and restart. Follow the 'Redeploying from scratch' guide in README.md to redeploy."
+          fi
+
   # ── Build & push Docker image to ACR ──────────────────────────────────────
   build-push:
     name: Build & Push Image
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, check-infra]
+    if: needs.check-infra.outputs.deployed == 'true'
     outputs:
       acr_login_server: ${{ steps.acr.outputs.login_server }}
     steps:
@@ -45,13 +82,13 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Get ACR login server
+      - name: Get ACR name and login
         id: acr
         run: |
-          echo "login_server=$(az acr list --resource-group rg-igormcplab --query '[0].loginServer' -o tsv)" >> "$GITHUB_OUTPUT"
-
-      - name: Login to ACR
-        run: az acr login --name "$(az acr list --resource-group rg-igormcplab --query '[0].name' -o tsv)"
+          ACR_NAME=$(az acr list --resource-group "${{ env.RESOURCE_GROUP }}" --query '[0].name' -o tsv)
+          LOGIN_SERVER=$(az acr list --resource-group "${{ env.RESOURCE_GROUP }}" --query '[0].loginServer' -o tsv)
+          az acr login --name "$ACR_NAME"
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -61,10 +98,10 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ steps.acr.outputs.login_server }}/igormcplab:${{ github.sha }}
-            ${{ steps.acr.outputs.login_server }}/igormcplab:latest
-          cache-from: type=registry,ref=${{ steps.acr.outputs.login_server }}/igormcplab:cache
-          cache-to: type=registry,ref=${{ steps.acr.outputs.login_server }}/igormcplab:cache,mode=max
+            ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_REPO }}:${{ github.sha }}
+            ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_REPO }}:latest
+          cache-from: type=registry,ref=${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_REPO }}:cache
+          cache-to: type=registry,ref=${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_REPO }}:cache,mode=max
 
   # ── Restart ACI to pick up the new image ──────────────────────────────────
   # Terraform (managed by HCP TF via VCS) keeps the infrastructure stable.
@@ -72,7 +109,8 @@ jobs:
   restart-and-verify:
     name: Restart & Smoke Test
     runs-on: ubuntu-latest
-    needs: build-push
+    needs: [check-infra, build-push]
+    if: needs.check-infra.outputs.deployed == 'true'
     steps:
       - name: Login to Azure (OIDC)
         uses: azure/login@v2
@@ -86,12 +124,12 @@ jobs:
           # az container restart returns HTTP 200 OK but the CLI treats it as
           # an error — suppress the false negative, health poll confirms success.
           az container restart \
-            --resource-group rg-igormcplab \
-            --name aci-igormcplab || true
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ env.ACI_NAME }}" || true
 
       - name: Wait for MCP server healthy (120s timeout)
         run: |
-          HEALTH_URL="http://mcp-igormcplab.eastus.azurecontainer.io:3000/health"
+          HEALTH_URL="http://${{ env.ACI_FQDN }}:3000/health"
           echo "Polling $HEALTH_URL"
           for i in $(seq 1 24); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
@@ -103,7 +141,7 @@ jobs:
 
       - name: Smoke test — tools/list
         run: |
-          RESPONSE=$(curl -s -X POST "http://mcp-igormcplab.eastus.azurecontainer.io:3000/mcp" \
+          RESPONSE=$(curl -s -X POST "http://${{ env.ACI_FQDN }}:3000/mcp" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
@@ -114,7 +152,7 @@ jobs:
 
       - name: Smoke test — echo invocation
         run: |
-          RESPONSE=$(curl -s -X POST "http://mcp-igormcplab.eastus.azurecontainer.io:3000/mcp" \
+          RESPONSE=$(curl -s -X POST "http://${{ env.ACI_FQDN }}:3000/mcp" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"text":"ping"}}}')
@@ -128,7 +166,7 @@ jobs:
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Image | \`${{ needs.build-push.outputs.acr_login_server }}/igormcplab:${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Health | http://mcp-igormcplab.eastus.azurecontainer.io:3000/health |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| HCP TF | https://app.terraform.io/app/gitIgorrz/workspaces/igor-mcp-lab |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${{ needs.build-push.outputs.acr_login_server }}/${{ env.IMAGE_REPO }}:${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Health | http://${{ env.ACI_FQDN }}:3000/health |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| HCP TF | ${{ env.TF_WORKSPACE_URL }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHA run | https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} |" >> "$GITHUB_STEP_SUMMARY"
