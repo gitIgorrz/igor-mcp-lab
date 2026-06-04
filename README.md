@@ -563,7 +563,7 @@ See [docs/debugging.md](./docs/debugging.md) for:
 
 ---
 
-## Versioning
+## Versioning and releases
 
 [Semantic Versioning](https://semver.org/):
 
@@ -571,4 +571,7 @@ See [docs/debugging.md](./docs/debugging.md) for:
 - **Minor** `0.X.0` — new tools, infrastructure changes, non-breaking
 - **Major** `X.0.0` — breaking changes to the MCP interface or deployment model
 
+Releases are created via the **Release** GitHub Actions workflow — no local `git tag` commands needed. Go to **Actions → Release → Run workflow**, enter the version (e.g. `v0.1.0`), and the workflow creates the tag and publishes the GitHub Release automatically.
+
+See [docs/release-process.md](./docs/release-process.md) for the full release workflow, rollback strategies, and hotfix process.  
 See [CHANGELOG.md](./CHANGELOG.md) for the full history.
