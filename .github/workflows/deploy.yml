@@ -37,10 +37,20 @@ jobs:
       - run: npm run build
       - run: npm run test:built
 
-  # ── Pre-flight: check whether infrastructure is deployed ───────────────────
-  # If the resource group does not exist (e.g. after terraform destroy) the
-  # Docker push and ACI restart jobs are skipped with a clear notice.
-  # The ACI FQDN is read dynamically here so it is correct for any region.
+  # ── Pre-flight: wait for ACR, then read ACI FQDN ─────────────────────────
+  # GitHub Actions fires simultaneously with the HCP TF VCS trigger. On a
+  # fresh deploy, HCP TF may still be applying (waiting for your plan approval)
+  # when this job runs. We poll for the ACR — not just the resource group —
+  # because the Docker push needs ACR specifically.
+  #
+  # Retry logic (every 30s, up to 10 minutes):
+  #   - Covers the race condition where Terraform is mid-apply
+  #   - If ACR still isn't found after 10 min, infrastructure is genuinely
+  #     not deployed (post-destroy), so we skip with a notice
+  #
+  # Note: if your HCP TF plan approval takes longer than 10 minutes, the
+  # Docker push will be skipped and you'll need to re-run this workflow
+  # manually after the Terraform apply completes.
   check-infra:
     name: Check infrastructure
     runs-on: ubuntu-latest
@@ -56,17 +66,45 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Check resource group and read ACI FQDN
+      - name: Wait for ACR and read ACI FQDN
         id: check
         run: |
-          if az group show --name "${{ env.RESOURCE_GROUP }}" &>/dev/null 2>&1; then
-            echo "deployed=true" >> "$GITHUB_OUTPUT"
-            # Read the FQDN directly from Azure — works regardless of region
-            FQDN=$(az container show \
+          # Poll for the ACR (not just the RG) — we need ACR to push the image.
+          # Retry every 30s for up to 10 minutes to handle the parallel
+          # HCP TF apply race condition on fresh deploys.
+          MAX_ATTEMPTS=20
+          ATTEMPT=0
+          ACR_NAME=""
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            ACR_NAME=$(az acr list \
               --resource-group "${{ env.RESOURCE_GROUP }}" \
-              --name "${{ env.ACI_NAME }}" \
-              --query "ipAddress.fqdn" -o tsv 2>/dev/null || echo "")
-            echo "aci_fqdn=$FQDN" >> "$GITHUB_OUTPUT"
+              --query "[0].name" -o tsv 2>/dev/null || echo "")
+
+            if [ -n "$ACR_NAME" ]; then
+              echo "ACR found: $ACR_NAME (attempt $ATTEMPT)"
+              break
+            fi
+
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: ACR not found yet, waiting 30s..."
+            sleep 30
+          done
+
+          if [ -z "$ACR_NAME" ]; then
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            echo "aci_fqdn=" >> "$GITHUB_OUTPUT"
+            echo "::notice::ACR not found in '${{ env.RESOURCE_GROUP }}' after $((MAX_ATTEMPTS * 30))s. Infrastructure is not deployed or the HCP TF apply is still pending approval. Re-run this workflow after the Terraform apply completes."
+            exit 0
+          fi
+
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
+          # Read the FQDN directly from Azure — works regardless of region
+          FQDN=$(az container show \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ env.ACI_NAME }}" \
+            --query "ipAddress.fqdn" -o tsv 2>/dev/null || echo "")
+          echo "aci_fqdn=$FQDN" >> "$GITHUB_OUTPUT"
           else
             echo "deployed=false" >> "$GITHUB_OUTPUT"
             echo "aci_fqdn=" >> "$GITHUB_OUTPUT"
